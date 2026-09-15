@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
+import { supabase } from "./utils/supabaseClient";
 import "./App.css";
 
 const PROJECTS_KEY = "projectflow_projects_v2";
 const TASKS_KEY = "projectflow_tasks_v2";
 const THEME_KEY = "projectflow_dark_mode_v2";
+
+const WORKSPACE_ID =
+  import.meta.env.VITE_SUPABASE_WORKSPACE_ID || null;
 
 const STATUSES = ["To Do", "In Progress", "Completed"];
 const PRIORITIES = ["Low", "Medium", "High"];
@@ -41,20 +45,6 @@ const initialProjects = [
     description: "Plan and execute the upcoming marketing campaign.",
     createdAt: "2026-09-03",
   },
-  {
-    id: "dashboard",
-    name: "Analytics Dashboard",
-    color: "#0984e3",
-    description: "Create a powerful analytics and reporting dashboard.",
-    createdAt: "2026-09-04",
-  },
-  {
-    id: "branding",
-    name: "Brand Identity",
-    color: "#e84393",
-    description: "Develop a complete brand identity system.",
-    createdAt: "2026-09-05",
-  },
 ];
 
 const initialTasks = [
@@ -79,83 +69,6 @@ const initialTasks = [
     dueDate: "2026-09-22",
     tag: "Frontend",
     createdAt: "2026-09-02",
-  },
-  {
-    id: "task-3",
-    title: "Build authentication screen",
-    description: "Create login and registration screens.",
-    projectId: "mobile",
-    status: "Completed",
-    priority: "High",
-    dueDate: "2026-09-12",
-    tag: "Development",
-    createdAt: "2026-09-03",
-  },
-  {
-    id: "task-4",
-    title: "Connect mobile API",
-    description: "Connect the application with the backend API.",
-    projectId: "mobile",
-    status: "In Progress",
-    priority: "High",
-    dueDate: "2026-09-20",
-    tag: "API",
-    createdAt: "2026-09-04",
-  },
-  {
-    id: "task-5",
-    title: "Create social media calendar",
-    description: "Prepare content plan for social media.",
-    projectId: "marketing",
-    status: "To Do",
-    priority: "Medium",
-    dueDate: "2026-09-25",
-    tag: "Content",
-    createdAt: "2026-09-05",
-  },
-  {
-    id: "task-6",
-    title: "Design campaign banners",
-    description: "Design banners for the marketing campaign.",
-    projectId: "marketing",
-    status: "Completed",
-    priority: "Low",
-    dueDate: "2026-09-10",
-    tag: "Design",
-    createdAt: "2026-09-06",
-  },
-  {
-    id: "task-7",
-    title: "Build analytics cards",
-    description: "Create dashboard statistics cards.",
-    projectId: "dashboard",
-    status: "In Progress",
-    priority: "High",
-    dueDate: "2026-09-21",
-    tag: "Dashboard",
-    createdAt: "2026-09-07",
-  },
-  {
-    id: "task-8",
-    title: "Add chart interactions",
-    description: "Add interactions to dashboard charts.",
-    projectId: "dashboard",
-    status: "To Do",
-    priority: "Medium",
-    dueDate: "2026-09-28",
-    tag: "Charts",
-    createdAt: "2026-09-08",
-  },
-  {
-    id: "task-9",
-    title: "Finalize brand colors",
-    description: "Finalize colors and brand guidelines.",
-    projectId: "branding",
-    status: "Completed",
-    priority: "High",
-    dueDate: "2026-09-09",
-    tag: "Branding",
-    createdAt: "2026-09-09",
   },
 ];
 
@@ -201,7 +114,36 @@ function isOverdue(task) {
   today.setHours(0, 0, 0, 0);
 
   const due = new Date(`${task.dueDate}T00:00:00`);
+
   return due < today;
+}
+
+function mapProjectFromDb(project) {
+  return {
+    id: project.id,
+    name: project.name,
+    color: project.color || "#6c5ce7",
+    description: project.description || "",
+    createdAt: project.created_at
+      ? String(project.created_at).slice(0, 10)
+      : new Date().toISOString().slice(0, 10),
+  };
+}
+
+function mapTaskFromDb(task) {
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description || "",
+    projectId: task.project_id,
+    status: task.status || "To Do",
+    priority: task.priority || "Medium",
+    dueDate: task.due_date || "",
+    tag: task.tag || "",
+    createdAt: task.created_at
+      ? String(task.created_at).slice(0, 10)
+      : new Date().toISOString().slice(0, 10),
+  };
 }
 
 function App() {
@@ -218,6 +160,8 @@ function App() {
   );
 
   const [activePage, setActivePage] = useState("Dashboard");
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("All");
   const [priorityFilter, setPriorityFilter] = useState("All");
@@ -233,6 +177,8 @@ function App() {
   const [confirmAction, setConfirmAction] = useState(null);
 
   const [notice, setNotice] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [supabaseMode, setSupabaseMode] = useState(Boolean(WORKSPACE_ID));
 
   const [projectForm, setProjectForm] = useState({
     name: "",
@@ -250,29 +196,86 @@ function App() {
     tag: "",
   });
 
-  useEffect(() => {
-    localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
-  }, [projects]);
+  const selectedProject = projects.find(
+    (project) => project.id === selectedProjectId
+  );
 
   useEffect(() => {
-    localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
-  }, [tasks]);
-
-  useEffect(() => {
-    localStorage.setItem(THEME_KEY, JSON.stringify(darkMode));
     document.body.classList.toggle("dark-mode", darkMode);
+    localStorage.setItem(THEME_KEY, JSON.stringify(darkMode));
   }, [darkMode]);
+
+  useEffect(() => {
+    if (!supabaseMode) {
+      localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+    }
+  }, [projects, supabaseMode]);
+
+  useEffect(() => {
+    if (!supabaseMode) {
+      localStorage.setItem(TASKS_KEY, JSON.stringify(tasks));
+    }
+  }, [tasks, supabaseMode]);
 
   useEffect(() => {
     if (!notice) return;
 
-    const timer = setTimeout(() => setNotice(""), 3000);
+    const timer = setTimeout(() => setNotice(""), 3500);
+
     return () => clearTimeout(timer);
   }, [notice]);
 
-  const selectedProject = projects.find(
-    (project) => project.id === activePage
-  );
+  useEffect(() => {
+    loadSupabaseData();
+  }, []);
+
+  async function loadSupabaseData() {
+    if (!WORKSPACE_ID) {
+      setSupabaseMode(false);
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const [
+        { data: projectRows, error: projectsError },
+        { data: taskRows, error: tasksError },
+      ] = await Promise.all([
+        supabase
+          .from("projects")
+          .select("*")
+          .eq("workspace_id", WORKSPACE_ID)
+          .order("created_at", { ascending: true }),
+
+        supabase
+          .from("tasks")
+          .select("*")
+          .eq("workspace_id", WORKSPACE_ID)
+          .order("created_at", { ascending: false }),
+      ]);
+
+      if (projectsError) throw projectsError;
+      if (tasksError) throw tasksError;
+
+      setProjects((projectRows || []).map(mapProjectFromDb));
+      setTasks((taskRows || []).map(mapTaskFromDb));
+      setSupabaseMode(true);
+      showMessage("Supabase data loaded successfully.");
+    } catch (error) {
+      console.error("Supabase loading error:", error);
+      setSupabaseMode(false);
+      showMessage(
+        "Supabase data load nahi ho saka. Local data use ho raha hai."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function showMessage(message) {
+    setNotice(message);
+  }
 
   const stats = useMemo(() => {
     const completed = tasks.filter(
@@ -310,33 +313,36 @@ function App() {
         (item) => item.id === task.projectId
       );
 
+      const searchableText = [
+        task.title,
+        task.description,
+        task.status,
+        task.priority,
+        task.tag,
+        project?.name,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
       const matchesSearch =
-        !term ||
-        [
-          task.title,
-          task.description,
-          task.status,
-          task.priority,
-          task.tag,
-          project?.name,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
-          .includes(term);
+        !term || searchableText.includes(term);
 
       const matchesStatus =
         statusFilter === "All" || task.status === statusFilter;
 
       const matchesPriority =
-        priorityFilter === "All" || task.priority === priorityFilter;
+        priorityFilter === "All" ||
+        task.priority === priorityFilter;
 
       return matchesSearch && matchesStatus && matchesPriority;
     });
 
     return [...result].sort((a, b) => {
       if (sortBy === "oldest") {
-        return String(a.createdAt).localeCompare(String(b.createdAt));
+        return String(a.createdAt).localeCompare(
+          String(b.createdAt)
+        );
       }
 
       if (sortBy === "dueDate") {
@@ -346,209 +352,27 @@ function App() {
       }
 
       if (sortBy === "priority") {
-        const weight = { High: 3, Medium: 2, Low: 1 };
+        const weight = {
+          High: 3,
+          Medium: 2,
+          Low: 1,
+        };
+
         return weight[b.priority] - weight[a.priority];
       }
 
-      return String(b.createdAt).localeCompare(String(a.createdAt));
+      return String(b.createdAt).localeCompare(
+        String(a.createdAt)
+      );
     });
   }, [
     projects,
-    priorityFilter,
-    searchTerm,
-    sortBy,
-    statusFilter,
     tasks,
+    searchTerm,
+    statusFilter,
+    priorityFilter,
+    sortBy,
   ]);
-
-  const visibleTasks = selectedProject
-    ? filteredTasks.filter(
-        (task) => task.projectId === selectedProject.id
-      )
-    : filteredTasks;
-
-  function showMessage(message) {
-    setNotice(message);
-  }
-
-  function resetProjectForm() {
-    setProjectForm({
-      name: "",
-      color: COLORS[0],
-      description: "",
-    });
-  }
-
-  function openNewProject() {
-    setEditingProject(null);
-    resetProjectForm();
-    setShowProjectModal(true);
-  }
-
-  function openEditProject(project) {
-    setEditingProject(project);
-    setProjectForm({
-      name: project.name,
-      color: project.color,
-      description: project.description || "",
-    });
-    setShowProjectModal(true);
-  }
-
-  function saveProject(event) {
-    event.preventDefault();
-
-    const name = projectForm.name.trim();
-
-    if (!name) {
-      showMessage("Please enter a project name.");
-      return;
-    }
-
-    if (editingProject) {
-      setProjects((current) =>
-        current.map((project) =>
-          project.id === editingProject.id
-            ? { ...project, ...projectForm, name }
-            : project
-        )
-      );
-
-      showMessage("Project updated successfully.");
-    } else {
-      const newProject = {
-        id: createId("project"),
-        name,
-        color: projectForm.color,
-        description: projectForm.description.trim(),
-        createdAt: new Date().toISOString().slice(0, 10),
-      };
-
-      setProjects((current) => [...current, newProject]);
-      setActivePage(newProject.id);
-      showMessage("Project created successfully.");
-    }
-
-    setShowProjectModal(false);
-    setEditingProject(null);
-  }
-
-  function requestDeleteProject(project) {
-    setConfirmAction(() => () => {
-      setProjects((current) =>
-        current.filter((item) => item.id !== project.id)
-      );
-
-      setTasks((current) =>
-        current.filter((task) => task.projectId !== project.id)
-      );
-
-      setActivePage("Projects");
-      showMessage("Project and related tasks deleted.");
-    });
-
-    setShowConfirmModal(true);
-  }
-
-  function resetTaskForm(projectId = "") {
-    setTaskForm({
-      title: "",
-      description: "",
-      projectId:
-        projectId || selectedProject?.id || projects[0]?.id || "",
-      status: "To Do",
-      priority: "Medium",
-      dueDate: "",
-      tag: "",
-    });
-  }
-
-  function openNewTask(projectId = "") {
-    setEditingTask(null);
-    resetTaskForm(projectId);
-    setShowTaskModal(true);
-  }
-
-  function openEditTask(task) {
-    setEditingTask(task);
-    setTaskForm({
-      title: task.title,
-      description: task.description || "",
-      projectId: task.projectId,
-      status: task.status,
-      priority: task.priority,
-      dueDate: task.dueDate || "",
-      tag: task.tag || "",
-    });
-    setShowTaskModal(true);
-  }
-
-  function saveTask(event) {
-    event.preventDefault();
-
-    if (!taskForm.title.trim()) {
-      showMessage("Please enter a task title.");
-      return;
-    }
-
-    if (!taskForm.projectId) {
-      showMessage("Please select a project.");
-      return;
-    }
-
-    const cleanTask = {
-      ...taskForm,
-      title: taskForm.title.trim(),
-      description: taskForm.description.trim(),
-      tag: taskForm.tag.trim(),
-    };
-
-    if (editingTask) {
-      setTasks((current) =>
-        current.map((task) =>
-          task.id === editingTask.id
-            ? { ...task, ...cleanTask }
-            : task
-        )
-      );
-
-      showMessage("Task updated successfully.");
-    } else {
-      const newTask = {
-        ...cleanTask,
-        id: createId("task"),
-        createdAt: new Date().toISOString().slice(0, 10),
-      };
-
-      setTasks((current) => [newTask, ...current]);
-      showMessage("Task created successfully.");
-    }
-
-    setShowTaskModal(false);
-    setEditingTask(null);
-  }
-
-  function requestDeleteTask(task) {
-    setConfirmAction(() => () => {
-      setTasks((current) =>
-        current.filter((item) => item.id !== task.id)
-      );
-
-      showMessage("Task deleted.");
-    });
-
-    setShowConfirmModal(true);
-  }
-
-  function updateTaskStatus(taskId, status) {
-    setTasks((current) =>
-      current.map((task) =>
-        task.id === taskId ? { ...task, status } : task
-      )
-    );
-
-    showMessage("Task status updated.");
-  }
 
   function getProjectTasks(projectId) {
     return tasks.filter((task) => task.projectId === projectId);
@@ -571,6 +395,373 @@ function App() {
       projects.find((project) => project.id === projectId)?.name ||
       "Unknown Project"
     );
+  }
+
+  function openProject(projectId) {
+    setSelectedProjectId(projectId);
+    setActivePage("Project");
+  }
+
+  function resetProjectForm() {
+    setProjectForm({
+      name: "",
+      color: COLORS[0],
+      description: "",
+    });
+  }
+
+  function openNewProject() {
+    setEditingProject(null);
+    resetProjectForm();
+    setShowProjectModal(true);
+  }
+
+  function openEditProject(project) {
+    setEditingProject(project);
+
+    setProjectForm({
+      name: project.name,
+      color: project.color,
+      description: project.description || "",
+    });
+
+    setShowProjectModal(true);
+  }
+
+  async function saveProject(event) {
+    event.preventDefault();
+
+    const name = projectForm.name.trim();
+
+    if (!name) {
+      showMessage("Please enter a project name.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (editingProject) {
+        const updatedProject = {
+          ...editingProject,
+          ...projectForm,
+          name,
+          description: projectForm.description.trim(),
+        };
+
+        if (supabaseMode) {
+          const { error } = await supabase
+            .from("projects")
+            .update({
+              name: updatedProject.name,
+              description: updatedProject.description,
+              color: updatedProject.color,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", editingProject.id)
+            .eq("workspace_id", WORKSPACE_ID);
+
+          if (error) throw error;
+        }
+
+        setProjects((current) =>
+          current.map((project) =>
+            project.id === editingProject.id
+              ? updatedProject
+              : project
+          )
+        );
+
+        showMessage("Project updated successfully.");
+      } else {
+        const newProject = {
+          id: createId("project"),
+          name,
+          color: projectForm.color,
+          description: projectForm.description.trim(),
+          createdAt: new Date().toISOString().slice(0, 10),
+        };
+
+        if (supabaseMode) {
+          const { data, error } = await supabase
+            .from("projects")
+            .insert({
+              id: newProject.id,
+              workspace_id: WORKSPACE_ID,
+              name: newProject.name,
+              description: newProject.description,
+              color: newProject.color,
+            })
+            .select()
+            .single();
+
+          if (error) throw error;
+
+          setProjects((current) => [
+            ...current,
+            mapProjectFromDb(data),
+          ]);
+        } else {
+          setProjects((current) => [...current, newProject]);
+        }
+
+        setSelectedProjectId(newProject.id);
+        setActivePage("Project");
+        showMessage("Project created successfully.");
+      }
+
+      setShowProjectModal(false);
+      setEditingProject(null);
+    } catch (error) {
+      console.error("Project save error:", error);
+      showMessage(error.message || "Project save nahi ho saka.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function requestDeleteProject(project) {
+    setConfirmAction(() => async () => {
+      setLoading(true);
+
+      try {
+        if (supabaseMode) {
+          const { error: taskError } = await supabase
+            .from("tasks")
+            .delete()
+            .eq("project_id", project.id)
+            .eq("workspace_id", WORKSPACE_ID);
+
+          if (taskError) throw taskError;
+
+          const { error: projectError } = await supabase
+            .from("projects")
+            .delete()
+            .eq("id", project.id)
+            .eq("workspace_id", WORKSPACE_ID);
+
+          if (projectError) throw projectError;
+        }
+
+        setProjects((current) =>
+          current.filter((item) => item.id !== project.id)
+        );
+
+        setTasks((current) =>
+          current.filter((task) => task.projectId !== project.id)
+        );
+
+        setSelectedProjectId(null);
+        setActivePage("Projects");
+        showMessage("Project and related tasks deleted.");
+      } catch (error) {
+        console.error("Project delete error:", error);
+        showMessage(error.message || "Project delete nahi ho saka.");
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    setShowConfirmModal(true);
+  }
+
+  function resetTaskForm(projectId = "") {
+    setTaskForm({
+      title: "",
+      description: "",
+      projectId:
+        projectId ||
+        selectedProject?.id ||
+        projects[0]?.id ||
+        "",
+      status: "To Do",
+      priority: "Medium",
+      dueDate: "",
+      tag: "",
+    });
+  }
+
+  function openNewTask(projectId = "") {
+    setEditingTask(null);
+    resetTaskForm(projectId);
+    setShowTaskModal(true);
+  }
+
+  function openEditTask(task) {
+    setEditingTask(task);
+
+    setTaskForm({
+      title: task.title,
+      description: task.description || "",
+      projectId: task.projectId,
+      status: task.status,
+      priority: task.priority,
+      dueDate: task.dueDate || "",
+      tag: task.tag || "",
+    });
+
+    setShowTaskModal(true);
+  }
+
+  async function saveTask(event) {
+    event.preventDefault();
+
+    if (!taskForm.title.trim()) {
+      showMessage("Please enter a task title.");
+      return;
+    }
+
+    if (!taskForm.projectId) {
+      showMessage("Please select a project.");
+      return;
+    }
+
+    setLoading(true);
+
+    const cleanTask = {
+      ...taskForm,
+      title: taskForm.title.trim(),
+      description: taskForm.description.trim(),
+      tag: taskForm.tag.trim(),
+    };
+
+    try {
+      if (editingTask) {
+        const updatedTask = {
+          ...editingTask,
+          ...cleanTask,
+        };
+
+        if (supabaseMode) {
+          const { error } = await supabase
+            .from("tasks")
+            .update({
+              title: updatedTask.title,
+              description: updatedTask.description,
+              project_id: updatedTask.projectId,
+              status: updatedTask.status,
+              priority: updatedTask.priority,
+              due_date: updatedTask.dueDate || null,
+              tag: updatedTask.tag,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", editingTask.id)
+            .eq("workspace_id", WORKSPACE_ID);
+
+          if (error) throw error;
+        }
+
+        setTasks((current) =>
+          current.map((task) =>
+            task.id === editingTask.id ? updatedTask : task
+          )
+        );
+
+        showMessage("Task updated successfully.");
+      } else {
+        const newTask = {
+          ...cleanTask,
+          id: createId("task"),
+          createdAt: new Date().toISOString().slice(0, 10),
+        };
+
+        if (supabaseMode) {
+          const { data, error } = await supabase
+            .from("tasks")
+            .insert({
+              id: newTask.id,
+              workspace_id: WORKSPACE_ID,
+              project_id: newTask.projectId,
+              title: newTask.title,
+              description: newTask.description,
+              status: newTask.status,
+              priority: newTask.priority,
+              due_date: newTask.dueDate || null,
+              tag: newTask.tag,
+            })
+            .select()
+            .single();
+
+          if (error) throw error;
+
+          setTasks((current) => [
+            mapTaskFromDb(data),
+            ...current,
+          ]);
+        } else {
+          setTasks((current) => [newTask, ...current]);
+        }
+
+        showMessage("Task created successfully.");
+      }
+
+      setShowTaskModal(false);
+      setEditingTask(null);
+    } catch (error) {
+      console.error("Task save error:", error);
+      showMessage(error.message || "Task save nahi ho saka.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function requestDeleteTask(task) {
+    setConfirmAction(() => async () => {
+      setLoading(true);
+
+      try {
+        if (supabaseMode) {
+          const { error } = await supabase
+            .from("tasks")
+            .delete()
+            .eq("id", task.id)
+            .eq("workspace_id", WORKSPACE_ID);
+
+          if (error) throw error;
+        }
+
+        setTasks((current) =>
+          current.filter((item) => item.id !== task.id)
+        );
+
+        showMessage("Task deleted.");
+      } catch (error) {
+        console.error("Task delete error:", error);
+        showMessage(error.message || "Task delete nahi ho saka.");
+      } finally {
+        setLoading(false);
+      }
+    });
+
+    setShowConfirmModal(true);
+  }
+
+  async function updateTaskStatus(taskId, status) {
+    try {
+      if (supabaseMode) {
+        const { error } = await supabase
+          .from("tasks")
+          .update({
+            status,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", taskId)
+          .eq("workspace_id", WORKSPACE_ID);
+
+        if (error) throw error;
+      }
+
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === taskId ? { ...task, status } : task
+        )
+      );
+
+      showMessage("Task status updated.");
+    } catch (error) {
+      console.error("Status update error:", error);
+      showMessage(error.message || "Status update nahi ho saka.");
+    }
   }
 
   function clearFilters() {
@@ -599,6 +790,7 @@ function App() {
     link.click();
 
     URL.revokeObjectURL(url);
+
     showMessage("Workspace exported successfully.");
   }
 
@@ -613,13 +805,18 @@ function App() {
       try {
         const data = JSON.parse(loadEvent.target.result);
 
-        if (!Array.isArray(data.projects) || !Array.isArray(data.tasks)) {
+        if (
+          !Array.isArray(data.projects) ||
+          !Array.isArray(data.tasks)
+        ) {
           throw new Error("Invalid file");
         }
 
         setProjects(data.projects);
         setTasks(data.tasks);
         setActivePage("Dashboard");
+        setSelectedProjectId(null);
+
         showMessage("Workspace imported successfully.");
       } catch {
         showMessage("Invalid workspace JSON file.");
@@ -635,7 +832,9 @@ function App() {
       setProjects(initialProjects);
       setTasks(initialTasks);
       setActivePage("Dashboard");
+      setSelectedProjectId(null);
       clearFilters();
+
       showMessage("Workspace reset successfully.");
     });
 
@@ -665,7 +864,7 @@ function App() {
             value={stats.totalProjects}
             icon="▦"
             color="purple"
-            detail="Active workspaces"
+            detail="Active projects"
           />
 
           <StatCard
@@ -717,7 +916,7 @@ function App() {
                   <button
                     className="project-progress-row"
                     key={project.id}
-                    onClick={() => setActivePage(project.id)}
+                    onClick={() => openProject(project.id)}
                   >
                     <div
                       className="project-icon"
@@ -782,11 +981,13 @@ function App() {
                 label="Completed"
                 value={stats.completed}
               />
+
               <Legend
                 color="#fdcb6e"
                 label="In Progress"
                 value={stats.inProgress}
               />
+
               <Legend
                 color="#6c5ce7"
                 label="To Do"
@@ -830,7 +1031,10 @@ function App() {
           title="Projects"
           subtitle="Manage all your projects from one place."
           action={
-            <button className="primary-button" onClick={openNewProject}>
+            <button
+              className="primary-button"
+              onClick={openNewProject}
+            >
               ＋ New Project
             </button>
           }
@@ -847,7 +1051,7 @@ function App() {
                   <button
                     className="large-project-icon"
                     style={{ background: project.color }}
-                    onClick={() => setActivePage(project.id)}
+                    onClick={() => openProject(project.id)}
                   >
                     {getInitials(project.name)}
                   </button>
@@ -873,12 +1077,14 @@ function App() {
 
                 <button
                   className="project-card-title"
-                  onClick={() => setActivePage(project.id)}
+                  onClick={() => openProject(project.id)}
                 >
                   {project.name}
                 </button>
 
-                <p>{project.description || "No project description."}</p>
+                <p>
+                  {project.description || "No project description."}
+                </p>
 
                 <div className="project-card-meta">
                   <span>{projectTasks.length} tasks</span>
@@ -897,7 +1103,7 @@ function App() {
 
                 <button
                   className="outline-button full-width"
-                  onClick={() => setActivePage(project.id)}
+                  onClick={() => openProject(project.id)}
                 >
                   Open project →
                 </button>
@@ -910,7 +1116,12 @@ function App() {
   }
 
   function renderProjectPage() {
-    const projectTasks = visibleTasks.filter(
+    if (!selectedProject) {
+      setActivePage("Projects");
+      return null;
+    }
+
+    const projectTasks = filteredTasks.filter(
       (task) => task.projectId === selectedProject.id
     );
 
@@ -968,8 +1179,9 @@ function App() {
             <span>To Do</span>
             <strong>
               {
-                projectTasks.filter((task) => task.status === "To Do")
-                  .length
+                projectTasks.filter(
+                  (task) => task.status === "To Do"
+                ).length
               }
             </strong>
           </div>
@@ -1164,19 +1376,25 @@ function App() {
 
           <div className="settings-row">
             <div>
-              <h3>Local Data Storage</h3>
-              <p>Your projects and tasks are saved in your browser.</p>
+              <h3>Database Connection</h3>
+              <p>
+                {supabaseMode
+                  ? "Connected with Supabase database."
+                  : "Using local browser storage."}
+              </p>
             </div>
 
-            <span className="settings-badge">Enabled</span>
+            <span className="settings-badge">
+              {supabaseMode ? "Supabase" : "Local"}
+            </span>
           </div>
 
           <div className="settings-row">
             <div>
               <h3>Workspace Statistics</h3>
               <p>
-                {stats.totalProjects} projects and {stats.totalTasks} tasks
-                currently stored.
+                {stats.totalProjects} projects and{" "}
+                {stats.totalTasks} tasks currently stored.
               </p>
             </div>
           </div>
@@ -1187,7 +1405,10 @@ function App() {
               <p>Download your projects and tasks as a JSON file.</p>
             </div>
 
-            <button className="outline-button" onClick={exportWorkspace}>
+            <button
+              className="outline-button"
+              onClick={exportWorkspace}
+            >
               Export JSON
             </button>
           </div>
@@ -1211,7 +1432,7 @@ function App() {
           <div className="settings-row danger-row">
             <div>
               <h3>Reset Workspace</h3>
-              <p>Delete your current data and restore demo data.</p>
+              <p>Restore demo data in the current browser.</p>
             </div>
 
             <button
@@ -1231,7 +1452,7 @@ function App() {
     if (activePage === "Projects") return renderProjects();
     if (activePage === "Tasks") return renderAllTasks();
     if (activePage === "Settings") return renderSettings();
-    if (selectedProject) return renderProjectPage();
+    if (activePage === "Project") return renderProjectPage();
 
     return renderDashboard();
   }
@@ -1298,17 +1519,22 @@ function App() {
           {projects.map((project) => (
             <button
               className={`nav-item project-nav-item ${
-                activePage === project.id ? "active" : ""
+                selectedProjectId === project.id &&
+                activePage === "Project"
+                  ? "active"
+                  : ""
               }`}
               key={project.id}
-              onClick={() => setActivePage(project.id)}
+              onClick={() => openProject(project.id)}
             >
               <span
                 className="nav-project-dot"
                 style={{ background: project.color }}
               />
 
-              <span className="nav-project-name">{project.name}</span>
+              <span className="nav-project-name">
+                {project.name}
+              </span>
             </button>
           ))}
         </div>
@@ -1319,7 +1545,11 @@ function App() {
             <strong>Upgrade Workspace</strong>
             <p>Unlock more powerful productivity features.</p>
 
-            <button onClick={() => showMessage("Upgrade feature coming soon.")}>
+            <button
+              onClick={() =>
+                showMessage("Upgrade feature coming soon.")
+              }
+            >
               Upgrade now →
             </button>
           </div>
@@ -1332,7 +1562,9 @@ function App() {
               <span>Administrator</span>
             </div>
 
-            <button onClick={() => setActivePage("Settings")}>⋯</button>
+            <button onClick={() => setActivePage("Settings")}>
+              ⋯
+            </button>
           </div>
         </div>
       </aside>
@@ -1392,6 +1624,12 @@ function App() {
             </div>
           </div>
         </header>
+
+        {loading && (
+          <div className="loading-bar">
+            Saving / loading data...
+          </div>
+        )}
 
         <div className="content-area">{renderContent()}</div>
       </main>
@@ -1631,6 +1869,7 @@ function App() {
         >
           <div className="confirm-content">
             <div className="confirm-icon">!</div>
+
             <p>
               Please confirm that you want to continue with this action.
             </p>
@@ -1646,8 +1885,8 @@ function App() {
 
             <button
               className="primary-button danger-button"
-              onClick={() => {
-                confirmAction?.();
+              onClick={async () => {
+                await confirmAction?.();
                 setShowConfirmModal(false);
                 setConfirmAction(null);
               }}
@@ -1690,7 +1929,10 @@ function PanelHeading({ title, subtitle, action }) {
 
 function NavItem({ icon, label, count, active, onClick }) {
   return (
-    <button className={`nav-item ${active ? "active" : ""}`} onClick={onClick}>
+    <button
+      className={`nav-item ${active ? "active" : ""}`}
+      onClick={onClick}
+    >
       <span>{icon}</span>
       {label}
       {count !== undefined && <small>{count}</small>}
@@ -1776,7 +2018,9 @@ function TaskTable({
               <td>{getProjectName(task.projectId)}</td>
 
               <td>
-                <span className={`priority ${task.priority.toLowerCase()}`}>
+                <span
+                  className={`priority ${task.priority.toLowerCase()}`}
+                >
                   {task.priority}
                 </span>
               </td>
@@ -1880,7 +2124,10 @@ function TaskCard({ task, onStatusChange, onEdit, onDelete }) {
 function Modal({ title, subtitle, onClose, children }) {
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className="modal"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="modal-heading">
           <div>
             <h2>{title}</h2>
